@@ -1,5 +1,6 @@
 package org.jenkinsci.gradle.plugins.jpi
 
+import org.gradle.testkit.runner.BuildResult
 import org.gradle.testkit.runner.TaskOutcome
 import spock.lang.Unroll
 
@@ -330,4 +331,67 @@ class JpiIntegrationSpec extends IntegrationSpec {
         new File(projectDir.root, "build/testRepo/org/jenkinsci/sample/${projectName}/1.0/${projectName}-1.0-javadoc.jar").exists()
         new File(projectDir.root, "build/testRepo/org/jenkinsci/sample/${projectName}/1.0/${projectName}-1.0-sources.jar").exists()
     }
+
+    //TODO fix me
+    def 'JpiPlugin is applied when some other plugin modifies War tasks'() {
+        given:
+        build.text = """
+            import jenkinsci.ConflictPlugin
+            
+            allprojects {
+                apply plugin: ConflictPlugin
+                apply plugin: 'java'
+            }
+            """.stripIndent()
+
+        new File(projectDir.root, "submodule").mkdirs()
+
+        File submoduleBuildFile = new File(projectDir.root, "submodule/build.gradle")
+        submoduleBuildFile.text = '''
+            plugins {
+                id 'org.jenkins-ci.jpi'
+            }
+        '''
+
+        settings.text = '''
+            include 'submodule'
+        '''
+
+        new File(projectDir.root, "buildSrc/src/main/groovy/jenkinsci").mkdirs()
+
+        File conflictPlugin = new File(projectDir.root, "buildSrc/src/main/groovy/jenkinsci/ConflictPlugin.groovy")
+        conflictPlugin.text = '''
+            package jenkinsci
+            
+            import org.gradle.api.Plugin
+            import org.gradle.api.Project
+            import org.gradle.api.tasks.bundling.War
+            
+            class ConflictPlugin implements Plugin<Project> {
+            
+                @Override
+                void apply(Project project) {
+                    project.tasks.withType(War) { War war ->
+                        war.archiveBaseName.set('do-something')
+                    }
+                }
+            }        
+        '''
+
+        File buildSrcFile = new File(projectDir.root, "buildSrc/build.groovy")
+        buildSrcFile.text = '''
+            plugins {
+                id 'groovy'
+            }
+        '''
+
+        when:
+        BuildResult result = gradleRunner()
+                .withArguments('buildEnvironment')
+                .buildAndFail()
+
+        then:
+        result.output.contains('Plugin with type class org.jenkinsci.gradle.plugins.jpi.JpiPlugin has not been used')
+    }
+
 }
